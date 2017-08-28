@@ -25,7 +25,6 @@ from scipy.optimize import fmin_l_bfgs_b
 # importlib.reload(utils2)
 # from utils2 import *
 # import utils2
-from vgg16_avg_module import vgg16_avg
 
 import keras
 from keras.models import Model, Sequential
@@ -36,8 +35,20 @@ from keras.layers import *
 # In[3]:
 style_transfer = False
 
-path = '/media/jaromir/SATA_2T/Data/Projekty/imagenet/train/'
-dpath = '/media/jaromir/SATA_2T/Data/Projekty/fastai/'
+#path = '/media/jaromir/SATA_2T/Data/Projekty/imagenet/train/'
+path = '/Volumes/Passport500/Data/Projekty/imagenet/train/'
+#dpath = '/media/jaromir/SATA_2T/Data/Projekty/fastai/'
+dpath = '/Volumes/Passport500/Data/Projekty/fastai/'
+
+rn_mean = np.array([123.68, 116.779, 103.939], dtype=np.float32)
+preproc = lambda x: (x - rn_mean)[:, :, :, ::-1]
+
+# When we generate images from this network, we'll need to undo the above preprocessing in order to view them.
+
+# In[9]:
+
+
+deproc = lambda x, s: np.clip(x.reshape(s)[:, :, :, ::-1] + rn_mean, 0, 255)
 
 # ## Neural style transfer
 
@@ -45,6 +56,8 @@ dpath = '/media/jaromir/SATA_2T/Data/Projekty/fastai/'
 
 # ### Setup
 if style_transfer:
+    from vgg16_avg_module import vgg16_avg
+
     # Our first step is to list out the files we have, and then grab some image.
     print(path + '**/*.JPEG')
     fnames = glob.glob(path + '**/*.JPEG', recursive=True)
@@ -65,15 +78,6 @@ if style_transfer:
     # In[8]:
 
 
-    rn_mean = np.array([123.68, 116.779, 103.939], dtype=np.float32)
-    preproc = lambda x: (x - rn_mean)[:, :, :, ::-1]
-
-    # When we generate images from this network, we'll need to undo the above preprocessing in order to view them.
-
-    # In[9]:
-
-
-    deproc = lambda x, s: np.clip(x.reshape(s)[:, :, :, ::-1] + rn_mean, 0, 255)
 
     img_arr = preproc(np.expand_dims(np.array(img), 0))
     shp = img_arr.shape
@@ -423,31 +427,30 @@ else:
 
     x = up_block(x, 64, 3)
     x = up_block(x, 64, 3)
-    x = Convolution2D(3, 9, 9, activation='tanh', border_mode='same')(x)
+    x = Conv2D(3, (9, 9), activation='tanh', padding='same')(x)
     outp = Lambda(lambda x: (x + 1) * 127.5)(x)
 
-    # The method of training this network is almost exactly the same as training the pixels from our previous implementations. The idea here is we're going to feed two images to Vgg16 and compare their convolutional outputs at some layer. These two images are the target image (which in our case is the same as the original but at higher resolution), and the output of the previous network we just defined, which we hope will learn to output a high resolution image.
+    # The method of training this network is almost exactly the same as training the pixels from our previous implementations.
+    # The idea here is we're going to feed two images to Vgg16 and compare their convolutional outputs at some layer.
+    # These two images are the target image (which in our case is the same as the original but at higher resolution),
+    # and the output of the previous network we just defined, which we hope will learn to output a high resolution image.
     #
-    # The key then is to train this other network to produce an image that minimizes the loss between the outputs of some convolutional layer in Vgg16 (which the paper refers to as "perceptual loss"). In doing so, we are able to train a network that can upsample an image and recreate the higher resolution details.
+    # The key then is to train this other network to produce an image that minimizes the loss between the outputs of
+    # some convolutional layer in Vgg16 (which the paper refers to as "perceptual loss").
+    # In doing so, we are able to train a network that can upsample an image and recreate the higher resolution details.
 
     # In[ ]:
 
-
-    vgg_inp = Input(shp)
+    new_shp = outp.shape
+    vgg_inp = Input(new_shp)
     vgg = VGG16(include_top=False, input_tensor=Lambda(preproc)(vgg_inp))
 
     # Since we only want to learn the "upsampling network", and are just using VGG to calculate the loss function, we set the Vgg layers to not be trainable.
 
-    # In[ ]:
-
-
     for l in vgg.layers: l.trainable = False
 
-
-    # An important difference in training for super resolution is the loss function. We use what's known as a perceptual loss function (which is simply the content loss for some layer).
-
-    # In[ ]:
-
+    # An important difference in training for super resolution is the loss function.
+    # We use what's known as a perceptual loss function (which is simply the content loss for some layer).
 
     def get_outp(m, ln): return m.get_layer(f'block{ln}_conv1').output
 
@@ -455,10 +458,6 @@ else:
     vgg_content = Model(vgg_inp, [get_outp(vgg, o) for o in [1, 2, 3]])
     vgg1 = vgg_content(vgg_inp)
     vgg2 = vgg_content(outp)
-
-
-    # In[ ]:
-
 
     def mean_sqr_b(diff):
         dims = list(range(1, K.ndim(diff)))
@@ -484,7 +483,9 @@ else:
     m_sr = Model([inp, vgg_inp], Lambda(content_fn)(vgg1 + vgg2))
     targ = np.zeros((arr_hr.shape[0], 1))
 
-    # Finally we compile this chain of models and we can pass it the original low resolution image as well as the high resolution to train on. We also define a zero vector as a target parameter, which is a necessary parameter when calling fit on a keras model.
+    # Finally we compile this chain of models and we can pass it the original low resolution image as well as
+    # the high resolution to train on. We also define a zero vector as a target parameter,
+    # which is a necessary parameter when calling fit on a keras model.
 
     # In[744]:
 
